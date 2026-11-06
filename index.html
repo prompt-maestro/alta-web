@@ -266,6 +266,10 @@ fieldset.plano{border:0;margin:0;padding:0;min-width:0}
 .svc-add{border:1.5px solid var(--line-2);color:var(--accent)}
 .svc-add .ic,.svc-ck .ic{width:19px;height:19px}
 .svc-ck{background:var(--accent);color:#fff}
+.svc-no-btn{display:block;margin:-4px 0 0 16px;padding:4px 0 12px;background:none;border:0;color:var(--ink-3);font-size:14.5px;text-decoration:underline;text-underline-offset:3px;min-height:36px;text-align:left}
+.svc.is-no{background:var(--bg-2,transparent);border-style:dashed;box-shadow:none}
+.svc.is-no .svc-n{color:var(--ink-3);text-decoration:line-through}
+.svc-head-no{cursor:default}
 .svc-head.propio{padding:12px 6px 4px 12px;gap:6px}
 .svc-head.propio .txt{font-weight:600}
 .svc-body{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:end;padding:4px 14px 14px 16px}
@@ -881,12 +885,11 @@ function datosDe(sec, todasLasClaves) {
   }
   if (sec === "reglas") {
     const r = f.reglas;
-    const claves = todasLasClaves ? ["anticipo", "inasistencia", "cambios", "no_hacemos"] : [...saver.sucias.reglas].filter((k) => !saver.apartados.reglas.has(k));
+    const claves = todasLasClaves ? ["anticipo", "cambios", "no_hacemos"] : [...saver.sucias.reglas].filter((k) => !saver.apartados.reglas.has(k));
     const d = {};
     for (const k of claves) {
       if (k === "anticipo") { const a = anticipoDe(r); if (a) d.anticipo = a; }
-      else if (k === "inasistencia") { if (r.inasistencia && r.op !== "ninguno") d.inasistencia = r.inasistencia; }
-      else if (k === "cambios") d.cambios = r.cambios.trim();
+      else if (k === "cambios") { if (r.cambiosHoras) d.cambios = r.cambiosHoras; }
       else if (k === "no_hacemos") d.no_hacemos = r.chips.filter((c) => c.sel).map((c) => c.texto);
     }
     return Object.keys(d).length ? d : null;
@@ -959,7 +962,9 @@ function armarFormas(solo) {
     const elegidos = (pol.no_hacemos || []).map(String);
     const chips = ((g && g.no_hacemos) || []).map((t) => ({ texto: t, sel: elegidos.some((e) => norm(e) === norm(t)) }));
     for (const e of elegidos) if (!chips.some((c) => norm(c.texto) === norm(e))) chips.push({ texto: e, sel: true });
-    f.reglas = { op, otro, pct, inasistencia: pol.inasistencia || null, cambios: pol.cambios || "", chips };
+    const mh = /al menos (\d+) horas/.exec(String(pol.cambios || ""));
+    const cambiosHoras = mh && CAMBIOS_HORAS.includes(Number(mh[1])) ? Number(mh[1]) : null;
+    f.reglas = { op, otro, pct, cambiosHoras, chips };
   }
   S.f = f;
 }
@@ -1365,7 +1370,7 @@ function sub5Servicios() {
   const msg = S.ui.fotoMsg ? nota(S.ui.fotoMsg.tipo, S.ui.fotoMsg.tipo === "info" ? "info" : "alerta", esc(S.ui.fotoMsg.texto)) : "";
   const html = `
     <h1 class="title" tabindex="-1">Tus ${esc(v.servicios)}</h1>
-    <p class="lead">Toca los que haces y ponles precio. La duración ya viene puesta; ajústala si quieres.</p>
+    <p class="lead">Toca los que haces y ponles precio. La duración ya viene puesta; ajústala si quieres. Si no haces alguno, toca «No lo hago» y tu asistente lo dirá con amabilidad.</p>
     ${avisoNoEditable()}
     <fieldset class="plano"${bloqueado() ? " disabled" : ""}>
     ${bloqueado() ? "" : foto}
@@ -1378,11 +1383,19 @@ function sub5Servicios() {
     </fieldset>`;
   return { html, bar: { primary: { label: "Seguir", act: "subSeguir" } } };
 }
+/* Un servicio que ella marco "No lo hago": vive en la lista de lo que no hace (reglas.no_hacemos), asi su asistente lo dice */
+const chipNoHago = (s) => S.f.reglas && S.f.reglas.chips.find((c) => norm(c.texto) === norm(s.nombre));
+const noLoHace = (s) => { const c = chipNoHago(s); return Boolean(c && c.sel); };
 function svcHtml(s) {
   const id = s.id;
+  if (!s.activo && noLoHace(s)) {
+    return `<div class="svc is-no" data-campo="svc-${id}"><div class="svc-head svc-head-no"><span class="svc-n">${esc(s.nombre)}</span><span class="svc-d">No lo hago</span></div>
+      <button type="button" class="svc-no-btn" data-act="svcToggle" data-id="${id}">Sí lo hago</button></div>`;
+  }
   if (!s.activo) {
     return `<div class="svc" data-campo="svc-${id}"><button type="button" class="svc-head" data-act="svcToggle" data-id="${id}" aria-pressed="false">
-      <span class="svc-n">${esc(s.nombre)}</span><span class="svc-d">${esc(dur(s.duracion_min))}</span><span class="svc-add">${ic("mas")}</span></button></div>`;
+      <span class="svc-n">${esc(s.nombre)}</span><span class="svc-d">${esc(dur(s.duracion_min))}</span><span class="svc-add">${ic("mas")}</span></button>
+      ${s.tipico && s.nombre ? `<button type="button" class="svc-no-btn" data-act="svcNoHago" data-id="${id}">No lo hago</button>` : ""}</div>`;
   }
   const cabeza = s.tipico
     ? `<button type="button" class="svc-head" data-act="svcToggle" data-id="${id}" aria-pressed="true"><span class="svc-n">${esc(s.nombre)}</span><span class="svc-ck">${ic("check")}</span><span class="sr">Toca para quitarlo</span></button>`
@@ -1458,20 +1471,18 @@ function sub5Reglas() {
     ${transferenciaHtml(r)}
     ${r.op && r.op !== "ninguno" ? `
     <section class="sec" data-campo="inasistencia">
-      <span class="lbl" id="l-ina">Si tu ${esc(v.persona)} no llega</span>
-      <p class="hint">¿Qué pasa con su anticipo?</p>
-      <div class="rows" role="radiogroup" aria-labelledby="l-ina">
-        <label class="row-pick${r.inasistencia === "retener" ? " is-sel" : ""}"><input class="sr" type="radio" name="ina" value="retener" data-m="regina"${r.inasistencia === "retener" ? " checked" : ""}><span class="radio" aria-hidden="true"></span><span><b>Me quedo con el anticipo</b><small>Así se respeta tu tiempo.</small></span></label>
-        <label class="row-pick${r.inasistencia === "devolver" ? " is-sel" : ""}"><input class="sr" type="radio" name="ina" value="devolver" data-m="regina"${r.inasistencia === "devolver" ? " checked" : ""}><span class="radio" aria-hidden="true"></span><span><b>Le devuelvo el anticipo</b><small>Te dejo el recado para que se lo devuelvas.</small></span></label>
-      </div>
+      <span class="lbl">Si tu ${esc(v.persona)} no llega</span>
+      <p class="hint">El anticipo no se devuelve: garantiza su lugar. Si tú decides devolverlo, lo haces por tu cuenta.</p>
       <p class="err" data-err="inasistencia" hidden></p>
     </section>` : ""}
-    <section class="sec">
-      <div class="field" data-campo="cambios">
-        <label for="r-cambios">Cambios y cancelaciones <span class="opt">(opcional)</span></label>
-        <textarea class="txt" id="r-cambios" rows="2" maxlength="300" data-m="reg:cambios" placeholder="Por ejemplo: cambios con al menos 4 horas de anticipación">${esc(r.cambios)}</textarea>
-        <p class="err" data-err="cambios" hidden></p>
+    <section class="sec" data-campo="cambios">
+      <span class="lbl" id="l-cam">Cambios de cita <span class="opt">(opcional)</span></span>
+      <p class="hint">¿Con cuánto tiempo de anticipación pueden cambiar su cita?</p>
+      <div class="opts" role="radiogroup" aria-labelledby="l-cam">
+        ${CAMBIOS_HORAS.map((h) => `<label class="opt-b${r.cambiosHoras === h ? " is-sel" : ""}"><input class="sr" type="radio" name="cambios" value="${h}" data-m="regcam"${r.cambiosHoras === h ? " checked" : ""}>${h} horas</label>`).join("")}
       </div>
+      ${r.cambiosHoras ? `<p class="hint" style="margin-top:12px">Tu asistente dirá: “${esc(textoCambios(r.cambiosHoras, r.op && r.op !== "ninguno"))}”</p>` : ""}
+      <p class="err" data-err="cambios" hidden></p>
     </section>
     <section class="sec" data-campo="no_hacemos">
       <span class="lbl">Lo que no haces <span class="opt">(opcional)</span></span>
@@ -1553,7 +1564,13 @@ function pantallaDeFalta(t) {
   return null;
 }
 const anticipoTexto = (a) => a === undefined ? "" : (a === null || a.tipo === "ninguno") ? "Sin anticipo" : a.tipo === "fijo" ? `${money(a.valor)} por cita` : a.tipo === "porcentaje" ? `${a.valor}% del precio` : a.tipo === "total" ? "El precio completo" : "";
-const inasistenciaTexto = (v) => v === "retener" ? "Te quedas con el anticipo" : v === "devolver" ? "Le devuelves el anticipo" : "";
+const inasistenciaTexto = () => "El anticipo no se devuelve";
+/* Cambios de cita: las horas que ella elige; el texto es el mismo que redacta el servidor (textoCambios en _shared/alta_web.ts) */
+const CAMBIOS_HORAS = [2, 4, 12, 24, 48];
+const textoCambios = (h, conAnticipo = true) => {
+  const base = `Cambios de cita con al menos ${h} horas de anticipación`;
+  return conAnticipo ? `${base}: el anticipo pasa a la nueva fecha. Con menos tiempo, o si se cancela, el anticipo no se devuelve.` : `${base}.`;
+};
 function horarioTexto(dias) {
   const out = [];
   const val = (k) => (Array.isArray(dias[k]) ? dias[k].join("-") : "cerrado");
@@ -1895,7 +1912,6 @@ function validarSub(k) {
     if (!r.op) errs.anticipo = "Elige cuánto cobras de anticipo.";
     else if (r.op === "otro" && !(entero(r.otro) > 0)) errs.anticipo = "Escribe cuánto cobras de anticipo.";
     else if (r.op === "porcentaje" && !(entero(r.pct) >= 1 && entero(r.pct) <= 100)) errs.anticipo = "Escribe un porcentaje del 1 al 100.";
-    if (r.op && r.op !== "ninguno" && !r.inasistencia) errs.inasistencia = "Elige qué pasa con el anticipo si no llega.";
   }
   if (Object.keys(errs).length) { mostrarErrores(errs); return false; }
   return true;
@@ -2006,9 +2022,25 @@ const ACT = {
     const s = svcPorId(el.dataset.id);
     if (!s || bloqueado()) return;
     s.activo = !s.activo;
+    // Lo hace: sale de "Lo que no haces"
+    const c = s.activo ? chipNoHago(s) : null;
+    if (c && c.sel) { c.sel = false; saver.soltar("reglas", "no_hacemos"); saver.marcar("reglas", "no_hacemos"); saver.programar("reglas", 400); }
     saver.programar("servicios", 500);
     pintar();
     enfocar(s.activo ? `#sp-${s.id}` : `[data-act="svcToggle"][data-id="${s.id}"]`);
+  },
+  svcNoHago(el) {
+    const s = svcPorId(el.dataset.id);
+    if (!s || bloqueado() || !s.nombre || !S.f.reglas) return;
+    const c = chipNoHago(s);
+    if (c) c.sel = true;
+    else S.f.reglas.chips.push({ texto: s.nombre, sel: true });
+    saver.soltar("reglas", "no_hacemos");
+    saver.marcar("reglas", "no_hacemos");
+    // Despues del guardado de servicios (500 ms): asi el servidor ya no lo ve activo
+    saver.programar("reglas", 900);
+    pintar();
+    enfocar(`[data-act="svcToggle"][data-id="${s.id}"]`);
   },
   svcMas(el) { ajustarDur(el.dataset.id, 15); },
   svcMenos(el) { ajustarDur(el.dataset.id, -15); },
@@ -2049,6 +2081,11 @@ const ACT = {
   chip(el) {
     const c = S.f.reglas.chips[Number(el.dataset.i)];
     if (!c) return;
+    // Un servicio que si hace no puede ir en "Lo que no haces" (el servidor tambien lo quita): se le dice donde cambiarlo
+    if (!c.sel && S.f.servicios.some((s) => s.activo && norm(s.nombre) === norm(c.texto))) {
+      toast("Ese servicio está entre los que haces. Si ya no lo haces, quítalo en Servicios.", "info", 6000);
+      return;
+    }
     c.sel = !c.sel;
     saver.soltar("reglas", "no_hacemos");
     saver.marcar("reglas", "no_hacemos");
@@ -2298,12 +2335,19 @@ const MODELO = {
     r.op = el.value;
     saver.soltar("reglas", "anticipo");
     saver.marcar("reglas", "anticipo");
-    if (r.op !== "ninguno" && r.inasistencia) saver.marcar("reglas", "inasistencia");
     saver.programar("reglas", 400);
     pintar();
     if (r.op === "otro") enfocar("#r-otro"); else if (r.op === "porcentaje") enfocar("#r-pct"); else enfocar(`input[name=anticipo][value="${r.op}"]`);
   },
-  regina(k, el) { S.f.reglas.inasistencia = el.value; saver.soltar("reglas", "inasistencia"); saver.marcar("reglas", "inasistencia"); saver.programar("reglas", 300); pintar(); enfocar(`input[name=ina][value="${el.value}"]`); },
+  regcam(k, el) {
+    S.f.reglas.cambiosHoras = Number(el.value);
+    saver.soltar("reglas", "cambios");
+    saver.marcar("reglas", "cambios");
+    saver.programar("reglas", 300);
+    limpiarErr("cambios");
+    pintar();
+    enfocar(`input[name=cambios][value="${el.value}"]`);
+  },
   gmail(k, el) { S.ui.gmail = el.value; limpiarErr("gmail"); },
   tr(k, el) { const u = trUi(); u[k] = k === "acepto" ? el.checked : el.value; limpiarErr("tr-" + k); limpiarErr("transferencia"); },
   revisado(k, el) { S.ui.revisado = el.checked; const r = sub5Revisar(); pintarBarra(r.bar); },
@@ -2631,8 +2675,8 @@ const Demo = (() => {
     } else if (sec === "reglas") {
       const p = b.politicas;
       if ("anticipo" in d) { const a = d.anticipo; p.anticipo = !a || a.tipo === "ninguno" ? null : a; if (p.anticipo === null) delete p.inasistencia; }
-      if ("inasistencia" in d) p.inasistencia = d.inasistencia;
-      if ("cambios" in d) poner(p, "cambios", d.cambios);
+      if (p.anticipo) p.inasistencia = "retener";
+      if ("cambios" in d) poner(p, "cambios", d.cambios ? textoCambios(d.cambios, Boolean(p.anticipo)) : "");
       if ("no_hacemos" in d) p.no_hacemos = d.no_hacemos;
     } else throw falla(400, "invalido", "Esa sección no existe.", { campo: "seccion" });
     guardarDb();
