@@ -2188,7 +2188,7 @@ const ACT = {
       Object.assign(u, { abierto: false, clabe: "", acepto: false, avisos: r.avisos || [] });
       aplicar(r.estado, { pintarVista: false });
       pintar();
-      toast(`¡Listo! Tus ${voc().personas} ya pueden pagar el anticipo por transferencia.`, "ok", 6000);
+      toast(`¡Listo! Tus ${voc().personas} podrán pagar el anticipo por transferencia cuando tu asistente esté activo.`, "ok", 6000);
       enfocar("#sec-transf .link");
     });
   },
