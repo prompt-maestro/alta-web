@@ -355,6 +355,11 @@ fieldset.plano{border:0;margin:0;padding:0;min-width:0}
 .check .box .ic{width:19px;height:19px}
 .check input:checked+.box{background:var(--accent);border-color:var(--accent);color:#fff}
 .check input:focus-visible+.box{outline:3px solid var(--accent);outline-offset:2px}
+.check input[aria-invalid="true"]+.box{border-color:var(--err)}
+.legal{margin:26px 0 4px}
+.legal .hint{margin:0 0 14px}
+.legal .cobro{font-size:15.5px;line-height:1.45;color:var(--ink);margin:0 0 16px}
+.legal a{font-weight:600;text-underline-offset:2px}
 
 /* Paso 6 */
 .pals{list-style:none;margin:0 0 18px;padding:0;display:grid;gap:10px}
@@ -574,7 +579,7 @@ function urlSegura(u) {
   if (!/^https:\/\//i.test(t)) return null;
   try { return new URL(t).protocol === "https:" ? t : null; } catch { return null; }
 }
-// El numero enmascarado que manda el servidor ("+52 ••• ••• 7087"), sin partirse en dos renglones
+// El numero enmascarado que manda el servidor ("+52 ••• ••• 0000"), sin partirse en dos renglones
 const enmascarado = (n) => String(n || "").trim().replace(/ /g, " ");
 
 const store = {
@@ -654,6 +659,7 @@ async function api(accion, extra = {}, opt = {}) {
   try { data = await res.json(); } catch { /* sin JSON */ }
   if (!res.ok || !data || data.ok === false) {
     const estado = (data && data.estado) || (res.status >= 500 ? "servidor" : "error");
+    if (estado === "alta_terminada") terminada();
     const msg = (data && typeof data.error === "string" && data.error) ||
       (res.status >= 500 ? "Algo falló de nuestro lado. Inténtalo de nuevo en un momento." : "No pudimos hacerlo. Inténtalo de nuevo.");
     throw new ApiError(res.status, estado, msg, data);
@@ -687,6 +693,13 @@ function voc() {
   return { persona: "clienta", personas: "clientas", articulo: "una", servicio: "servicio", servicios: "servicios" };
 }
 const planDe = (clave) => ((S.inicio && S.inicio.planes) || []).find((p) => p.clave === clave) || null;
+// Lo legal de la pagina (actividad 26): el servidor lo manda solo cuando ya existen las paginas de terminos y de privacidad.
+// Sin el, el paso 3 no muestra aviso ni casilla (asi corre hasta que se publiquen).
+function legales() {
+  const l = S.inicio && S.inicio.legales;
+  if (!l || !l.version || !urlSegura(l.terminos_url) || !urlSegura(l.privacidad_url) || !l.responsable || !l.domicilio || !l.contacto) return null;
+  return l;
+}
 const maxVista = () => (S.estado ? Math.max(3, Math.min(11, Number(S.estado.paso) || 3)) : S.pre.giro ? 3 : 2);
 const datos = () => (S.estado && S.estado.datos) || {};
 // Con el asistente activo la pagina es de solo lectura: el servidor responde ya_activo a todo lo que no sea ver
@@ -1016,6 +1029,7 @@ function mostrarErrorServidor(sec, campo, msg) {
 
 /* ===================== Pintar ===================== */
 function pintar(opt = {}) {
+  if (S.terminada) return;
   const nueva = !!opt.nueva;
   const fn = VISTAS[S.view] || VISTAS[1];
   const r = fn();
@@ -1099,6 +1113,36 @@ function aplicar(estado, opt = {}) {
   if (opt.pintarVista !== false && !enFormulario) pintar();
   else pintarArriba();
 }
+// H30 (actividad 25): con el asistente activo el link del alta ya no abre nada. La pagina lo dice y lleva a Mi cuenta
+const CUENTA_URL = "https://cuenta.prompt-maestro.com/";
+function terminada() {
+  if (S.terminada) return;
+  S.terminada = true;
+  store.del(TK);
+  S.token = null;
+  S.estado = null;
+  Poll.stop();
+  $("#arriba").hidden = true;
+  const bar = $("#barra");
+  bar.hidden = true;
+  bar.innerHTML = "";
+  $("#main").innerHTML = `<div class="view entra">
+    <div class="emblem" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+    <div class="centro">
+      <h1 class="title" tabindex="-1">Tu asistente ya está funcionando</h1>
+      <p class="lead">Tu alta terminó. Desde ahora, para ver tu plan, tus pagos o tu semáforo, entra a Mi cuenta con el link que te llega a tu WhatsApp.</p>
+    </div>
+    <ul class="tips">
+      <li><span class="t-ic">${ic("pausa")}</span><span><b>Para pausarlo o cambiar un precio,</b> escríbele desde tu WhatsApp personal al número de tu negocio.</span></li>
+      <li><span class="t-ic">${ic("cel")}</span><span><b>Puedes ver cada conversación</b> en tu app WhatsApp Business.</span></li>
+    </ul>
+    <p class="centro"><a class="btn btn-primary" href="${CUENTA_URL}">Ir a Mi cuenta</a></p>
+  </div>`;
+  window.scrollTo(0, 0);
+  const h = $("#main h1");
+  if (h) h.focus({ preventScroll: true });
+}
+
 function salir(msg) {
   store.del(TK);
   S.token = null;
@@ -1171,6 +1215,7 @@ VISTAS[3] = () => {
   const e = S.ui.err3 || {};
   const errHtml = (k) => `<p class="err" data-err="${k}"${e[k] ? "" : " hidden"}>${e[k] ? ic("alerta") + "<span>" + esc(e[k]) + "</span>" : ""}</p>`;
   const inv = (k) => (e[k] ? ' aria-invalid="true"' : "");
+  const lg = legales(), elegido = planDe(S.pre.plan);
   const html = `
     <h1 class="title" tabindex="-1">Elige tu plan</h1>
     <p class="lead">Hoy solo pagas la instalación. La ${per === "anual" ? "anualidad" : "mensualidad"} empieza el día que tu asistente quede activo.</p>
@@ -1212,6 +1257,15 @@ VISTAS[3] = () => {
       <p class="hint">A 10 dígitos. Aquí te llegan los avisos de tu asistente; no es el número de tu negocio.</p>
       ${errHtml("whatsapp")}
     </div>
+    ${lg ? `
+    <div class="legal" data-campo="acepto">
+      <p class="cobro">${elegido
+        ? `Tu plan es un cobro automático: <b>${money(per === "anual" ? elegido.anual : elegido.mensual)} cada ${per === "anual" ? "año" : "mes"}</b> a tu tarjeta, desde el día que tu asistente quede activo. Puedes cancelar cuando quieras.`
+        : `Tu plan es un cobro automático cada ${per === "anual" ? "año" : "mes"} a tu tarjeta, desde el día que tu asistente quede activo. Puedes cancelar cuando quieras.`}</p>
+      <p class="hint"><b>Aviso de privacidad.</b> ${esc(lg.responsable)} (Prompt Maestro), con domicilio en ${esc(lg.domicilio)}, usa tu nombre, tu WhatsApp, tu correo y los datos de tu negocio para crear tu alta, cobrar tu plan y operar tu asistente. No los vendemos ni los usamos para publicidad. Puedes limitar su uso o pedir que se borren escribiendo a ${esc(lg.contacto)}. <a href="${esc(lg.privacidad_url)}" target="_blank" rel="noopener">Aviso completo</a></p>
+      <label class="check"><input type="checkbox" data-m="acepto"${S.ui.acepto === lg.version ? " checked" : ""}${inv("acepto")}><span class="box">${ic("check")}</span><span>Acepto los <a href="${esc(lg.terminos_url)}" target="_blank" rel="noopener">términos del servicio</a> y el <a href="${esc(lg.privacidad_url)}" target="_blank" rel="noopener">aviso de privacidad</a>.</span></label>
+      ${errHtml("acepto")}
+    </div>` : ""}
     ${S.ui.yaExiste ? `
       <div class="ya" id="ya-existe" tabindex="-1" role="alert">
         <p>${esc(S.ui.yaExiste.texto)}</p>
@@ -1863,21 +1917,39 @@ async function crear() {
   if (!p.profesional.trim()) errs.profesional = "Escribe tu nombre.";
   const wa = diezDigitos(p.whatsapp);
   if (!wa) errs.whatsapp = p.whatsapp.trim() ? "Revisa tu número: deben ser 10 dígitos, sin el +52." : "Escribe tu WhatsApp personal a 10 dígitos.";
+  // S.ui.acepto guarda la VERSION que marco (no un si o no): si los terminos cambian, la casilla vuelve a salir sin marcar
+  const lg = legales();
+  if (lg && S.ui.acepto !== lg.version) errs.acepto = "Marca la casilla para aceptar los términos del servicio y el aviso de privacidad.";
   S.ui.yaExiste = null;
   if (Object.keys(errs).length) { S.ui.err3 = errs; pintar(); mostrarErrores(errs); return; }
   S.ui.err3 = {};
   try {
-    const r = await api("crear", { giro: p.giro, plan: p.plan, periodo: p.periodo === "anual" ? "anual" : "mensual", negocio: p.negocio.trim(), profesional: p.profesional.trim(), whatsapp: wa }, { sinToken: true });
+    const acepta = lg ? { acepto: true, version_terminos: lg.version } : {};
+    const r = await api("crear", { giro: p.giro, plan: p.plan, periodo: p.periodo === "anual" ? "anual" : "mensual", negocio: p.negocio.trim(), profesional: p.profesional.trim(), whatsapp: wa, ...acepta }, { sinToken: true });
     if (!r.token) throw new ApiError(0, "sin_token", "No pudimos crear tu alta. Inténtalo de nuevo en un momento.");
     S.token = r.token;
     store.set(TK, r.token);
     // Si el servidor no mando el estado, se pide en seguida (el token ya quedo guardado)
     S.estado = r.estado || (await api("ver")).estado;
+    S.ui.acepto = null; // la aceptacion fue de ESTA alta: otra alta en la misma pestana la vuelve a pedir
     ss.del("pm_alta_vista");
     S.view = 3;
     pintar({ nueva: true });
   } catch (e) {
-    if (e.estado === "ya_existe") {
+    if (e.estado === "invalido" && e.data.campo === "acepto") {
+      // El servidor pide una aceptacion que esta pagina no mando: lo legal se prendio o cambio de version con la pagina abierta.
+      // Se vuelve a pedir lo legal y la casilla sale (sin marcar) sin tener que recargar
+      const antes = lg ? lg.version : null;
+      try { S.inicio = await api("inicio", {}, { sinToken: true }); } catch { /* se queda con lo que tenia */ }
+      const ahora = legales();
+      S.ui.acepto = null;
+      // Solo si llego una version distinta hay una casilla nueva que marcar; si no (el inicio fallo o trajo lo mismo), lo que sirve
+      // es lo que dijo el servidor: recargar
+      S.ui.err3 = { acepto: ahora && ahora.version !== antes ? "Marca la casilla para aceptar los términos del servicio y el aviso de privacidad." : e.message };
+      pintar();
+      mostrarErrores(S.ui.err3);
+    }
+    else if (e.estado === "ya_existe") {
       S.ui.yaExiste = { url: e.data.recuperar_url || null, texto: e.message };
       pintar();
       const y = $("#ya-existe");
@@ -2351,6 +2423,7 @@ const MODELO = {
   gmail(k, el) { S.ui.gmail = el.value; limpiarErr("gmail"); },
   tr(k, el) { const u = trUi(); u[k] = k === "acepto" ? el.checked : el.value; limpiarErr("tr-" + k); limpiarErr("transferencia"); },
   revisado(k, el) { S.ui.revisado = el.checked; const r = sub5Revisar(); pintarBarra(r.bar); },
+  acepto(k, el) { const lg = legales(); S.ui.acepto = el.checked && lg ? lg.version : null; limpiarErr("acepto"); if (S.ui.err3) delete S.ui.err3.acepto; },
   nuevoNo(k, el) { S.ui.nuevoNo = el.value; },
 };
 
@@ -2474,6 +2547,7 @@ async function arrancar() {
       S.token ? api("ver").catch((e) => e) : Promise.resolve(null),
     ]);
     S.inicio = ini;
+    if (ver instanceof ApiError && ver.estado === "alta_terminada") return;
     if (ver instanceof ApiError) {
       if (tokenMalo(ver)) { store.del(TK); S.token = null; S.estado = null; setTimeout(() => toast("Tu link ya no sirve. Pídenos uno nuevo por WhatsApp y sigues donde ibas.", "err", 8000), 400); }
       else throw ver;
@@ -2503,6 +2577,9 @@ async function arrancar() {
 const Demo = (() => {
   if (!DEMO) return null;
   const KEY = "pm_alta_demo", FKEY = "pm_alta_demo_banderas";
+  // Lo legal en el demo (datos inventados); con ?demo=1&sinlegales=1 se ve la pagina como corre mientras no haya terminos publicados
+  const LEGALES_DEMO = Q.get("sinlegales") === "1" ? null : { version: "demo", terminos_url: "https://prompt-maestro.com/terminos", privacidad_url: "https://prompt-maestro.com/privacidad", responsable: "Nombre del responsable (demo)", domicilio: "Calle y número, Guadalajara, Jalisco (demo)", contacto: "privacidad@ejemplo.com" };
+  let iniciosDemo = 0;
   const leer = (k) => { try { return JSON.parse(ss.get(k) || "null"); } catch { return null; } };
   let db = leer(KEY);
   const banderas = leer(FKEY) || {};
@@ -2691,9 +2768,11 @@ const Demo = (() => {
     await dormir(b.accion === "foto" ? 2600 : 260 + Math.random() * 300);
     const a = b.accion;
     console.debug("demo api:", a);
-    if (a === "inicio") return { ok: true, giros: GIROS, planes: PLANES, moneda: "mxn" };
+    // ?legalestarde=1: el primer inicio llega sin lo legal, como una pagina abierta desde antes de prenderlo (crear la rechaza y la casilla aparece)
+    if (a === "inicio") return { ok: true, giros: GIROS, planes: PLANES, moneda: "mxn", legales: Q.get("legalestarde") === "1" && !iniciosDemo++ ? null : LEGALES_DEMO };
     if (a === "crear") {
       const g = giro(b.giro), p = plan(b.plan);
+      if (LEGALES_DEMO && (b.acepto !== true || b.version_terminos !== LEGALES_DEMO.version)) throw falla(400, "invalido", "Marca la casilla para aceptar los términos del servicio y el aviso de privacidad.", { campo: "acepto" });
       if (!g) throw falla(400, "invalido", "Elige tu profesión.", { campo: "giro" });
       if (!p) throw falla(400, "invalido", "Elige uno de los planes.", { campo: "plan" });
       if (!String(b.negocio || "").trim()) throw falla(400, "invalido", "Escribe el nombre de tu negocio.", { campo: "negocio" });
