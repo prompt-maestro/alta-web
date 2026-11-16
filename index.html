@@ -326,6 +326,11 @@ fieldset.plano{border:0;margin:0;padding:0;min-width:0}
 .tr-activa{margin:12px 0 0}
 .tr-links{display:flex;flex-wrap:wrap;gap:6px 18px;margin:-6px 0 0 4px}
 .tr-links .link{margin:0;padding:10px 0}
+.tr-pend{margin:12px 0 0;padding:16px;border-radius:var(--r);background:var(--surface);border:1px solid var(--line)}
+.tr-pend p{margin:0 0 10px}
+.tr-pend .tr-pend-t{display:flex;align-items:center;gap:8px}
+.tr-pend .btn{margin:4px 0 6px}
+.tr-pend .tr-links{margin:0}
 
 /* Resumen */
 .faltan{background:var(--warn-soft);border:1px solid var(--warn-line);border-radius:var(--r);padding:14px 16px 4px;margin:0 0 18px;color:var(--warn)}
@@ -1553,7 +1558,9 @@ function sub5Reglas() {
 }
 /*
  * Anticipo por transferencia o deposito (opcional, solo si cobra anticipo). Se guarda con su propio boton y la casilla de
- * responsabilidad que manda el servidor (estado.transferencia.casilla), tal cual.
+ * responsabilidad que manda el servidor (estado.transferencia.casilla), tal cual. La CLABE guardada queda POR CONFIRMAR
+ * (estado.transferencia.por_confirmar): solo entra a su negocio cuando ella manda desde su WhatsApp personal el mensaje que deja
+ * escrito el boton (al numero de alta, con su codigo). Sin sondeo en este paso (no se repinta mientras escribe): "Ya la confirmé" revisa.
  */
 function trUi() {
   if (!S.ui.tr) S.ui.tr = { abierto: false, titular: "", clabe: "", banco: "", acepto: false, avisos: [] };
@@ -1564,8 +1571,9 @@ function transferenciaHtml(r) {
   if (!t) return "";
   const u = trUi(), v = voc();
   const cobra = r.op && r.op !== "ninguno";
-  if (!cobra && !t.activa) return "";
-  const prendido = !!t.activa || u.abierto;
+  const pend = t.por_confirmar || null, urlPend = pend ? urlSegura(pend.url) : null;
+  if (!cobra && !t.activa && !pend) return "";
+  const prendido = !!t.activa || !!pend || u.abierto;
   const avisos = (u.avisos || []).map((a) => nota("warn", "info", esc(a))).join("");
   let h = `<section class="sec" data-campo="transferencia" id="sec-transf">
     <div class="tr-head">
@@ -1573,6 +1581,18 @@ function transferenciaHtml(r) {
       <button type="button" class="switch" role="switch" aria-checked="${prendido}" aria-labelledby="l-tr" data-act="trSwitch"><span>${prendido ? "Sí" : "No"}</span><span class="sw-tr"><span class="sw-th"></span></span></button>
     </div>
     <p class="hint">Mercado Pago sigue siendo necesario; la transferencia es una opción más para tus ${esc(v.personas)}, y tú revisas cada pago.</p>`;
+  if (pend && !u.abierto) {
+    const datosP = [pend.banco, pend.titular, pend.clabe && "CLABE " + enmascarado(pend.clabe)].filter(Boolean).join(", ");
+    h += `<div class="tr-pend" id="tr-pend">
+      <p class="tr-pend-t">${ic("escudo")}<b>Confírmala desde tu WhatsApp personal</b></p>
+      <p>Guardaste: ${esc(datosP)}. Para cuidar tu dinero, falta que la confirmes: toca el botón y manda el mensaje que ya va escrito. Si tu celular te pregunta con cuál abrirlo, elige tu WhatsApp personal, no WhatsApp Business.</p>
+      <p class="muted">${t.activa ? "Mientras no la confirmes, sigue la que ya tenías." : `Mientras no la confirmes, tus ${esc(v.personas)} solo pagan con Mercado Pago.`} ¿No reconoces esa CLABE? No la confirmes: toca “No es mía” y avísanos, porque alguien más tiene el link de tu alta.</p>
+      ${urlPend ? `<a class="btn btn-primary btn-sm" href="${esc(urlPend)}" target="_blank" rel="noopener" data-act="ext" data-kind="clabe">${ic("chat")}Confirmar por WhatsApp</a>` : `<p class="muted">El botón para confirmarla no está disponible ahorita; escríbenos por WhatsApp.</p>`}
+      <div class="tr-links"><button type="button" class="link" data-act="verAhora">Ya la confirmé</button><button type="button" class="link" data-act="trDescartar">No es mía</button></div>
+    </div>`;
+  } else if (t.vencida && !t.activa && !u.abierto) {
+    h += nota("warn", "info", `Tu CLABE que termina en ${esc(String(t.vencida).slice(-4))} no se confirmó en 48 horas y la quitamos. Si la quieres, vuelve a guardarla y confírmala con el botón.`);
+  }
   if (t.activa && !u.abierto) {
     const datosTr = [t.banco, t.titular, t.clabe && "CLABE " + enmascarado(t.clabe)].filter(Boolean).join(", ");
     h += `<div class="done tr-activa"><span class="done-ic">${ic("check")}</span><div><b>Transferencia activa</b><span>${esc(datosTr)}</span></div></div>
@@ -1742,10 +1762,18 @@ VISTAS[7] = () => {
   const c = S.estado.calendario || {};
   let html = `<h1 class="title" tabindex="-1">Tu agenda en Google Calendar</h1>
     <p class="lead">Te llegará un aviso de Google; tus citas pagadas aparecerán en tu app de Google Calendar.</p>`;
-  const cambiando = c.conectado && S.ui.cambiarCorreo;
+  const cerrado = c.editable === false;
+  const cambiando = c.conectado && S.ui.cambiarCorreo && !cerrado;
   if (c.conectado && !cambiando) {
     html += hecho("Tu agenda está lista", c.correo ? `Compartida con tu correo ${c.correo}` : c.detalle || "");
-    html += `<p class="fine">${ic("info")}<span>¿Te equivocaste de correo? <button type="button" class="link" data-act="cambiarCorreo">Cámbialo</button></span></p>`;
+    html += cerrado
+      ? `<p class="fine">${ic("info")}<span>Tu asistente ya se está generando. Si te equivocaste de correo, escríbenos por WhatsApp y lo corregimos contigo.</span></p>`
+      : `<p class="fine">${ic("info")}<span>¿Te equivocaste de correo? <button type="button" class="link" data-act="cambiarCorreo">Cámbialo</button></span></p>`;
+    return { html, bar: { primary: { label: "Seguir", act: "irA", v: 8, disabled: maxVista() < 8 } } };
+  }
+  // Revision de la 25b: despues de Generar la agenda ya no se crea ni se cambia aqui, este o no en verde (el servidor diria 409)
+  if (cerrado) {
+    html += nota("info", "info", "Tu asistente ya se está generando y tu agenda ya no se cambia desde aquí. Si algo no está bien con tu agenda, escríbenos por WhatsApp y lo resolvemos contigo.");
     return { html, bar: { primary: { label: "Seguir", act: "irA", v: 8, disabled: maxVista() < 8 } } };
   }
   if (cambiando) html += nota("info", "info", `Hoy está compartida con <b>${esc(c.correo || "tu correo anterior")}</b>. Escribe el correo correcto; al anterior le quitamos el acceso.`);
@@ -1766,6 +1794,21 @@ VISTAS[8] = () => {
   const m = S.estado.mercado_pago || {}, v = voc();
   let html = `<h1 class="title" tabindex="-1">Conecta Mercado Pago</h1>
     <p class="lead">Los anticipos de tus ${esc(v.personas)} llegan directo a tu cuenta. Solo autorizas con un toque; nunca vemos tu contraseña.</p>`;
+  const pend = m.pendiente, urlPend = pend ? urlSegura(pend.url) : null;
+  if (urlPend) {
+    html += `<section class="card hola">
+      <div class="hola-ic">${ic("escudo")}</div>
+      <h2 class="h3">Confírmala desde tu WhatsApp personal</h2>
+      <p>${pend.primera ? `Conectaste la cuenta de Mercado Pago <b>${esc(pend.cuenta)}</b>.` : `Pediste cambiar a la cuenta de Mercado Pago <b>${esc(pend.cuenta)}</b>.`} Para cuidar tu dinero, falta que la confirmes: toca el botón y manda el mensaje que ya va escrito. Si tu celular te pregunta con cuál abrirlo, elige tu WhatsApp personal, no WhatsApp Business.</p>
+      <p class="muted" style="margin:0">¿No reconoces esa cuenta? No la confirmes: toca “Conectar otra cuenta”, autoriza la tuya y escríbenos, porque alguien más tiene el link de tu alta.</p>
+    </section>`;
+    html += esperando("Esperando tu confirmación...");
+    return {
+      html,
+      bar: { primary: { label: "Confirmar por WhatsApp", href: urlPend, act: "ext", kind: "mp", icon: "chat" }, secondary: { label: "Conectar otra cuenta", act: "conectarMp" } },
+      poll: verCada("mp-confirmar", 5000),
+    };
+  }
   if (m.conectado) {
     html += hecho("Mercado Pago conectado", m.detalle || "");
     return { html, bar: { primary: { label: "Seguir", act: "irA", v: 9, disabled: maxVista() < 9 } } };
@@ -2279,6 +2322,15 @@ const ACT = {
       toast(`Listo: ya no ofreces transferencia. Tus ${voc().personas} pagan el anticipo con Mercado Pago.`, "ok", 6000);
     });
   },
+  trDescartar(el) {
+    conCarga(el, async () => {
+      const r = await api("transferencia", { descartar: true });
+      aplicar(r.estado, { pintarVista: false });
+      pintar();
+      toast("Listo, la quitamos y ya avisamos a nuestro equipo. Guarda tu CLABE de nuevo cuando quieras.", "ok", 6000);
+      enfocar('[data-act="trSwitch"]');
+    });
+  },
   trGuardar(el) {
     const u = trUi(), errs = {};
     const clabe = String(u.clabe || "").replace(/\s+/g, "");
@@ -2297,8 +2349,10 @@ const ACT = {
       Object.assign(u, { abierto: false, clabe: "", acepto: false, avisos: r.avisos || [] });
       aplicar(r.estado, { pintarVista: false });
       pintar();
-      toast(`¡Listo! Tus ${voc().personas} podrán pagar el anticipo por transferencia cuando tu asistente esté activo.`, "ok", 6000);
-      enfocar("#sec-transf .link");
+      const porConfirmar = !!(r.estado && r.estado.transferencia && r.estado.transferencia.por_confirmar);
+      if (porConfirmar) toast("Guardada. Ahora confírmala desde tu WhatsApp personal con el botón.", "ok", 6000);
+      else toast(`¡Listo! Tus ${voc().personas} podrán pagar el anticipo por transferencia cuando tu asistente esté activo.`, "ok", 6000);
+      enfocar(porConfirmar ? "#tr-pend .btn" : "#sec-transf .link");
     });
   },
   verAhora(el) { conCarga(el, async () => { aplicar((await api("ver")).estado); }); },
@@ -2589,6 +2643,7 @@ const Demo = (() => {
   if (Q.get("sinparam") === "1") banderas.sinparam = true;
   if (Q.get("sinestado") === "1") banderas.sinestado = true;
   if (Q.get("yapagado") === "1") banderas.yapagado = true;
+  if (Q.get("mppendiente") === "1") banderas.mppendiente = true;
   ss.set(FKEY, JSON.stringify(banderas));
   const guardarDb = () => ss.set(KEY, JSON.stringify(db));
   const falla = (status, estado, error, extra = {}) => new ApiError(status, estado, error, { ok: false, estado, error, ...extra });
@@ -2660,7 +2715,11 @@ const Demo = (() => {
     if (!db.verif.hecha && t - db.verif.at >= 3000) db.verif.hecha = true;
     if (db.pago.pedido && !db.pago.hecho && t - db.pago.pedido >= 2500) db.pago.hecho = true;
     if (db.wa.pedido && !db.wa.conectado && t - db.wa.pedido >= 2500) { db.wa.conectado = true; db.wa.numero = "+523312345678"; }
-    if (db.mp.pedido && !db.mp.conectado && t - db.mp.pedido >= 2000) { db.mp.conectado = true; db.mp.detalle = `Cuenta de ${db.alta.profesional} (demo)`; }
+    if (db.mp.pedido && !db.mp.conectado && t - db.mp.pedido >= 2000) {
+      if (banderas.mppendiente && !db.mp.confirmada) db.mp.porConfirmar = true;
+      else { db.mp.conectado = true; db.mp.porConfirmar = false; db.mp.detalle = `Cuenta de ${db.alta.profesional} (demo)`; }
+    }
+    if (db.mp.confirmadaAt && !db.mp.confirmada && t - db.mp.confirmadaAt >= 3000) db.mp.confirmada = true;
     if (db.hola.at && !db.hola.hecho && t - db.hola.at >= 3000) db.hola.hecho = true;
     if (db.ayudaAt && !db.wa.conectado && t - db.ayudaAt >= 8000) { db.wa.conectado = true; db.wa.numero = "+523398765432"; }
     guardarDb();
@@ -2710,9 +2769,12 @@ const Demo = (() => {
       whatsapp: { conectado: db.wa.conectado, numero: db.wa.numero, autoservicio: !banderas.ayuda, ayuda_pedida: db.ayuda },
       palomitas,
       hola: { hecho: db.hola.hecho && fab.etapa !== "detenida", url: db.wa.conectado ? "https://wa.me/523312345678?text=Hola" : null },
-      calendario: { conectado: db.cal.conectado, detalle: db.cal.detalle, correo: db.cal.correo || null },
+      calendario: { conectado: db.cal.conectado, detalle: db.cal.detalle, correo: db.cal.correo || null, editable: !fab.pedida },
       transferencia: { activa: !!(db.transf && db.transf.activa), banco: (db.transf && db.transf.banco) || null, titular: (db.transf && db.transf.titular) || null, clabe: db.transf && db.transf.clabe ? "•••• " + db.transf.clabe.slice(-4) : null, plazo_min: 60, casilla: "Confirmo que esta cuenta es mía y que reviso cada transferencia antes de que se confirme la cita. Queda registrado como confirmado por mí." },
-      mercado_pago: { conectado: db.mp.conectado, detalle: db.mp.detalle, requerido: mpReq },
+      mercado_pago: {
+        conectado: db.mp.conectado, detalle: db.mp.detalle, requerido: mpReq,
+        pendiente: db.mp.porConfirmar && !db.mp.conectado ? { cuenta: "TIENDA_DEMO", primera: true, url: "https://wa.me/523312345678?text=" + encodeURIComponent("Sí, confirmo mi cuenta de Mercado Pago 4821"), vence_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString() } : null,
+      },
       fabrica: fab,
       generar: { puede: !gf.length && !fab.pedida, faltan: gf },
     };
@@ -2846,6 +2908,7 @@ const Demo = (() => {
       }
       case "pedir_ayuda": db.ayuda = true; db.ayudaAt = Date.now(); guardarDb(); return { ok: true, estado: estado() };
       case "calendario": {
+        if (db.fab.pedida) throw falla(409, "generando", "Tu asistente ya se está generando y tu agenda ya no se cambia desde aquí. Si te equivocaste de correo, escríbenos por WhatsApp y lo corregimos contigo.");
         if (!db.wa.conectado) throw falla(409, "sin_whatsapp", "Primero conecta tu WhatsApp Business (paso 6).");
         const m = String(b.gmail || "").trim();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m)) throw falla(400, "invalido", "Escribe tu correo de Gmail (o de tu cuenta de Google) completo.", { campo: "gmail" });
@@ -2854,7 +2917,7 @@ const Demo = (() => {
       }
       case "mercado_pago":
         if (!db.wa.conectado) throw falla(409, "sin_whatsapp", "Primero conecta tu WhatsApp Business (paso 6).");
-        db.mp.pedido = Date.now(); guardarDb();
+        db.mp.pedido = Date.now(); db.mp.confirmada = false; db.mp.confirmadaAt = 0; db.mp.porConfirmar = false; guardarDb();
         return { ok: true, url: BASE + (banderas.sinparam ? "?demo=1&volvi=mp" : "?demo=1#mp=ok") };
       case "generar": {
         const e = estado();
@@ -2869,6 +2932,7 @@ const Demo = (() => {
   function externo(kind) {
     if (kind === "verif") toast("Modo demo: aquí se abriría WhatsApp con tu código. Se verifica solo en unos segundos.", "info", 5000);
     else if (kind === "hola") { if (db && db.fab.pedida) { if (!db.reHola) db.reHola = Date.now(); guardarDb(); } else if (db && !db.hola.at) { db.hola.at = Date.now(); guardarDb(); } toast("Modo demo: aquí se abriría WhatsApp con “Hola”. Llega en unos segundos.", "info", 5000); }
+    else if (kind === "mp") { if (db && !db.mp.confirmadaAt) { db.mp.confirmadaAt = Date.now(); guardarDb(); } toast("Modo demo: aquí se abriría WhatsApp con “Sí, confirmo mi cuenta de Mercado Pago 4821”. Se confirma en unos segundos.", "info", 5000); }
     else toast("Modo demo: aquí se abriría WhatsApp para pedir tu link.", "info", 5000);
   }
   function rellenar() {
