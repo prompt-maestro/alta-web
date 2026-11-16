@@ -1585,10 +1585,11 @@ function transferenciaHtml(r) {
     const datosP = [pend.banco, pend.titular, pend.clabe && "CLABE " + enmascarado(pend.clabe)].filter(Boolean).join(", ");
     h += `<div class="tr-pend" id="tr-pend">
       <p class="tr-pend-t">${ic("escudo")}<b>Confírmala desde tu WhatsApp personal</b></p>
-      <p>Guardaste: ${esc(datosP)}. Para cuidar tu dinero, falta que la confirmes: toca el botón y manda el mensaje que ya va escrito. Si tu celular te pregunta con cuál abrirlo, elige tu WhatsApp personal, no WhatsApp Business.</p>
-      <p class="muted">${t.activa ? "Mientras no la confirmes, sigue la que ya tenías." : `Mientras no la confirmes, tus ${esc(v.personas)} solo pagan con Mercado Pago.`} ¿No reconoces esa CLABE? No la confirmes: toca “No es mía” y avísanos, porque alguien más tiene el link de tu alta.</p>
+      <p>Guardaste: ${esc(datosP)}. Para cuidar tu dinero, falta que la confirmes: toca el botón y manda el mensaje que ya va escrito (lleva la terminación de tu CLABE: revisa que sea la tuya). Si tu celular te pregunta con cuál abrirlo, elige tu WhatsApp personal, no WhatsApp Business. Tienes 48 horas.</p>
+      ${pend.reemplaza ? `<p><b>Esta CLABE reemplazó a la que termina en ${esc(pend.reemplaza)}.</b> Si tú no la cambiaste, no la confirmes y toca “No es mía”.</p>` : ""}
+      <p class="muted">${t.activa ? `Mientras no la confirmes, sigue la que termina en ${esc(String(t.clabe || "").slice(-4))}.` : `Mientras no la confirmes, tus ${esc(v.personas)} solo pagan con Mercado Pago.`} ¿No reconoces esa CLABE? No la confirmes: toca “No es mía” y avísanos, porque alguien más tiene el link de tu alta.</p>
       ${urlPend ? `<a class="btn btn-primary btn-sm" href="${esc(urlPend)}" target="_blank" rel="noopener" data-act="ext" data-kind="clabe">${ic("chat")}Confirmar por WhatsApp</a>` : `<p class="muted">El botón para confirmarla no está disponible ahorita; escríbenos por WhatsApp.</p>`}
-      <div class="tr-links"><button type="button" class="link" data-act="verAhora">Ya la confirmé</button><button type="button" class="link" data-act="trDescartar">No es mía</button></div>
+      <div class="tr-links"><button type="button" class="link" data-act="verAhora">Ya la confirmé</button><button type="button" class="link" data-act="trCorregir">Corregir datos</button><button type="button" class="link" data-act="trDescartar">No es mía</button></div>
     </div>`;
   } else if (t.vencida && !t.activa && !u.abierto) {
     h += nota("warn", "info", `Tu CLABE que termina en ${esc(String(t.vencida).slice(-4))} no se confirmó en 48 horas y la quitamos. Si la quieres, vuelve a guardarla y confírmala con el botón.`);
@@ -1701,6 +1702,7 @@ function sub5Revisar() {
       ${kv("Cambios", pol.cambios)}
       ${kv("No haces", (pol.no_hacemos || []).join(", "))}
       ${e.transferencia && e.transferencia.activa ? kv("Transferencia", [e.transferencia.banco, e.transferencia.clabe && "CLABE " + enmascarado(e.transferencia.clabe)].filter(Boolean).join(", ")) : ""}
+      ${e.transferencia && e.transferencia.por_confirmar ? kv("Por confirmar", `CLABE ${enmascarado(e.transferencia.por_confirmar.clabe)}: confírmala o quítala en Reglas`) : ""}
     </section>`;
   if (!d.confirmado) h += listaFaltas(rec, "recs", "<p>Para que tu asistente quede aún mejor, puedes agregar:</p>");
   const listo = d.listo !== undefined ? !!d.listo : !faltan.length;
@@ -1831,6 +1833,7 @@ VISTAS[8] = () => {
 /* Paso 9: generar */
 function pasoDeFalta(t) {
   const s = norm(t);
+  if (/clabe/.test(s)) return 5;
   if (/mercado ?pago/.test(s)) return 8;
   if (/hola|whatsapp personal/.test(s)) return 9;
   if (/calendar|agenda|gmail/.test(s)) return 7;
@@ -1858,7 +1861,8 @@ VISTAS[9] = () => {
   if (faltan.length && !f.pedida) {
     html += `<div class="faltan"><h2>${ic("alerta")}Te falta</h2>${faltan.map((t) => {
       const p = pasoDeFalta(t);
-      return p && p !== 9 && p <= maxVista() ? `<button type="button" data-act="irA" data-v="${p}"><span>${esc(cap(t))}</span>${ic("sig")}</button>` : `<span class="solo">${esc(cap(t))}</span>`;
+      const sub = /clabe/.test(norm(t)) ? ' data-sub="reglas"' : "";
+      return p && p !== 9 && p <= maxVista() ? `<button type="button" data-act="irA" data-v="${p}"${sub}><span>${esc(cap(t))}</span>${ic("sig")}</button>` : `<span class="solo">${esc(cap(t))}</span>`;
     }).join("")}</div>`;
   }
   if (!h.hecho) html += holaHtml(h, false);
@@ -2086,7 +2090,7 @@ async function reducirFoto(file) {
 
 const ACT = {
   empezar() { ir(2); },
-  irA(el) { ir(Number(el.dataset.v)); },
+  irA(el) { ir(Number(el.dataset.v), el.dataset.sub ? { sub: el.dataset.sub } : {}); },
   atras() {
     if (S.view === 5) {
       const i = SUBS.findIndex((s) => s.k === S.sub);
@@ -2300,7 +2304,7 @@ const ACT = {
   },
   trSwitch(el) {
     const t = S.estado.transferencia || {}, u = trUi();
-    if (t.activa) { ACT.trApagar(el); return; }
+    if (t.activa || t.por_confirmar) { ACT.trApagar(el); return; }
     u.abierto = !u.abierto;
     u.avisos = [];
     pintar();
@@ -2321,6 +2325,12 @@ const ACT = {
       pintar();
       toast(`Listo: ya no ofreces transferencia. Tus ${voc().personas} pagan el anticipo con Mercado Pago.`, "ok", 6000);
     });
+  },
+  trCorregir() {
+    const p = (S.estado.transferencia || {}).por_confirmar || {}, u = trUi();
+    Object.assign(u, { abierto: true, titular: p.titular || "", banco: p.banco || "", clabe: "", acepto: false, avisos: [] });
+    pintar();
+    enfocar("#tr-clabe");
   },
   trDescartar(el) {
     conCarga(el, async () => {
@@ -2721,6 +2731,10 @@ const Demo = (() => {
     }
     if (db.mp.confirmadaAt && !db.mp.confirmada && t - db.mp.confirmadaAt >= 3000) db.mp.confirmada = true;
     if (db.hola.at && !db.hola.hecho && t - db.hola.at >= 3000) db.hola.hecho = true;
+    if (db.transf && db.transf.pend && db.transf.pend.confirmadaAt && t - db.transf.pend.confirmadaAt >= 3000) {
+      const pd = db.transf.pend;
+      db.transf = { activa: true, titular: pd.titular, clabe: pd.clabe, banco: pd.banco };
+    }
     if (db.ayudaAt && !db.wa.conectado && t - db.ayudaAt >= 8000) { db.wa.conectado = true; db.wa.numero = "+523398765432"; }
     guardarDb();
   }
@@ -2759,6 +2773,7 @@ const Demo = (() => {
     if (!db.cal.conectado) gf.push("crear tu agenda en Google Calendar");
     if (mpReq && !db.mp.conectado) gf.push("conectar tu Mercado Pago");
     if (!db.hola.hecho) gf.push('mandar "hola" a tu negocio desde tu WhatsApp personal');
+    if (db.transf && db.transf.pend) gf.splice((db.pago.hecho ? 0 : 1) + (conf ? 0 : 1), 0, "revisar tu CLABE por confirmar (confírmala si es tuya o quítala)");
     return {
       alta: { ...db.alta, whatsapp: db.whatsapp ? "+52 ••• ••• " + db.whatsapp.slice(-4) : null },
       vocabulario: { persona: g.persona, personas: g.personas, articulo: g.articulo, servicio: g.servicio, servicios: g.servicios },
@@ -2770,7 +2785,11 @@ const Demo = (() => {
       palomitas,
       hola: { hecho: db.hola.hecho && fab.etapa !== "detenida", url: db.wa.conectado ? "https://wa.me/523312345678?text=Hola" : null },
       calendario: { conectado: db.cal.conectado, detalle: db.cal.detalle, correo: db.cal.correo || null, editable: !fab.pedida },
-      transferencia: { activa: !!(db.transf && db.transf.activa), banco: (db.transf && db.transf.banco) || null, titular: (db.transf && db.transf.titular) || null, clabe: db.transf && db.transf.clabe ? "•••• " + db.transf.clabe.slice(-4) : null, plazo_min: 60, casilla: "Confirmo que esta cuenta es mía y que reviso cada transferencia antes de que se confirme la cita. Queda registrado como confirmado por mí." },
+      transferencia: {
+        activa: !!(db.transf && db.transf.activa), banco: (db.transf && db.transf.banco) || null, titular: (db.transf && db.transf.titular) || null, clabe: db.transf && db.transf.clabe ? "•••• " + db.transf.clabe.slice(-4) : null, plazo_min: 60, casilla: "Confirmo que esta cuenta es mía y que reviso cada transferencia antes de que se confirme la cita. Queda registrado como confirmado por mí.",
+        por_confirmar: db.transf && db.transf.pend ? { banco: db.transf.pend.banco, titular: db.transf.pend.titular, clabe: "•••• " + db.transf.pend.clabe.slice(-4), url: "https://wa.me/5213300000001?text=" + encodeURIComponent(`Sí, confirmo mi CLABE que termina en ${db.transf.pend.clabe.slice(-4)} para transferencias 4821`), vence_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString(), reemplaza: null } : null,
+        vencida: null,
+      },
       mercado_pago: {
         conectado: db.mp.conectado, detalle: db.mp.detalle, requerido: mpReq,
         pendiente: db.mp.porConfirmar && !db.mp.conectado ? { cuenta: "TIENDA_DEMO", primera: true, url: "https://wa.me/523312345678?text=" + encodeURIComponent("Sí, confirmo mi cuenta de Mercado Pago 4821"), vence_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString() } : null,
@@ -2894,6 +2913,7 @@ const Demo = (() => {
         return { ok: true, url: BASE + (banderas.sinparam ? "?demo=1" : "?demo=1&whatsapp=conectado") };
       case "transferencia": {
         if (b.activa === false) { db.transf = { activa: false }; guardarDb(); return { ok: true, estado: estado(), avisos: [] }; }
+        if (b.descartar === true) { if (db.transf) delete db.transf.pend; guardarDb(); return { ok: true, estado: estado(), avisos: [] }; }
         const titular = String(b.titular || "").trim(), clabe = String(b.clabe || "").replace(/\s+/g, "");
         if (!titular) throw falla(400, "invalido", "Escribe el nombre del titular de la cuenta.", { campo: "titular" });
         if (!/^\d{18}$/.test(clabe)) throw falla(400, "invalido", "La CLABE son 18 dígitos.", { campo: "clabe" });
@@ -2902,7 +2922,10 @@ const Demo = (() => {
         const delaClabe = BANCOS[clabe.slice(0, 3)] || "tu banco";
         const avisos = [];
         if (b.banco && norm(b.banco) !== norm(delaClabe)) avisos.push(`El banco que escribiste no coincide con el de la CLABE; usaremos ${delaClabe}.`);
-        db.transf = { activa: true, titular, clabe, banco: delaClabe };
+        // Como en el servidor: la CLABE queda por confirmar desde su WhatsApp (la que ya estaba confirmada sigue)
+        const ya = db.transf && db.transf.activa ? db.transf : null;
+        if (ya && ya.clabe === clabe && ya.titular === titular && ya.banco === delaClabe) delete ya.pend;
+        else db.transf = { ...(ya || { activa: false }), pend: { titular, clabe, banco: delaClabe, confirmadaAt: 0 } };
         guardarDb();
         return { ok: true, estado: estado(), avisos };
       }
@@ -2932,6 +2955,7 @@ const Demo = (() => {
   function externo(kind) {
     if (kind === "verif") toast("Modo demo: aquí se abriría WhatsApp con tu código. Se verifica solo en unos segundos.", "info", 5000);
     else if (kind === "hola") { if (db && db.fab.pedida) { if (!db.reHola) db.reHola = Date.now(); guardarDb(); } else if (db && !db.hola.at) { db.hola.at = Date.now(); guardarDb(); } toast("Modo demo: aquí se abriría WhatsApp con “Hola”. Llega en unos segundos.", "info", 5000); }
+    else if (kind === "clabe") { if (db && db.transf && db.transf.pend && !db.transf.pend.confirmadaAt) { db.transf.pend.confirmadaAt = Date.now(); guardarDb(); } toast("Modo demo: aquí se abriría WhatsApp con “Sí, confirmo mi CLABE que termina en … para transferencias 4821”. Toca “Ya la confirmé” en unos segundos.", "info", 5000); }
     else if (kind === "mp") { if (db && !db.mp.confirmadaAt) { db.mp.confirmadaAt = Date.now(); guardarDb(); } toast("Modo demo: aquí se abriría WhatsApp con “Sí, confirmo mi cuenta de Mercado Pago 4821”. Se confirma en unos segundos.", "info", 5000); }
     else toast("Modo demo: aquí se abriría WhatsApp para pedir tu link.", "info", 5000);
   }
